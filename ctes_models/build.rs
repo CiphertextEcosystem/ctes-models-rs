@@ -4,9 +4,25 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=proto");
 
-    if !Path::new("proto/model/ciphertext.proto").exists() {
-        fetch_protos();
-    }
+    let current_dir = std::env::current_dir().unwrap();
+    let is_package_dir = current_dir.to_string_lossy().contains("target/package");
+
+    let (proto_path, include_path) = if is_package_dir {
+        let out_dir = std::env::var("OUT_DIR").unwrap();
+        let proto_dir = Path::new(&out_dir).join("proto");
+        fetch_protos_to(&proto_dir);
+        let proto_path_str = proto_dir.join("model/ciphertext.proto").to_str().unwrap().to_string();
+        let include_path_str = format!("{}/", proto_dir.to_str().unwrap());
+        (proto_path_str, include_path_str)
+    } else {
+        if !Path::new("proto/model/ciphertext.proto").exists() {
+            fetch_protos_to(Path::new("proto"));
+        }
+        (
+            "proto/model/ciphertext.proto".to_string(),
+            "proto/".to_string(),
+        )
+    };
 
     let protoc = std::env::var("PROTOC")
         .ok()
@@ -29,13 +45,14 @@ fn main() {
     let mut config = prost_build::Config::new();
     config.protoc_executable(protoc.to_str().expect("Invalid protoc path"));
     config
-        .compile_protos(&["proto/model/ciphertext.proto"][..], &["proto/"][..])
+        .compile_protos(&[proto_path.as_str()][..],
+         &[include_path.as_str()][..])
         .unwrap();
 }
 
-fn fetch_protos() {
+fn fetch_protos_to(dst_base: &Path) {
     let temp_dir = std::env::temp_dir().join(format!("ctes-proto-{}", std::process::id()));
-    let model_dir = Path::new("proto/model");
+    let model_dir = dst_base.join("model");
 
     // Clone repo
     let status = Command::new("git")
@@ -53,8 +70,8 @@ fn fetch_protos() {
         panic!("Failed to clone protobuf repository");
     }
 
-    std::fs::create_dir_all(model_dir).unwrap();
-    copy_dir_all(&temp_dir.join("model"), model_dir).unwrap();
+    std::fs::create_dir_all(&model_dir).unwrap();
+    copy_dir_all(&temp_dir.join("model"), &model_dir).unwrap();
     std::fs::remove_dir_all(&temp_dir).ok();
 }
 
